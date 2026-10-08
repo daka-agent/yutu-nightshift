@@ -390,7 +390,8 @@ var WILL = {"_comment":"玉兔的意志日历 —— 不是排班表，是它自
   /* ---------- 时间 ---------- */
 
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
-  function hhmm(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  // 注：以前这里有个 hhmm()，给「昨天 16:20」拼时分用的。按微信列表页规则改完后
+  // 已经没人用它了 —— 如果哪天真要做「点进单条看详情」，详情页才需要时分。
   function dateKey(d) {
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
@@ -401,16 +402,25 @@ var WILL = {"_comment":"玉兔的意志日历 —— 不是排班表，是它自
     return Math.round((y - x) / 86400000);
   }
 
+  /* 时间标记 —— 严格照微信朋友圈【列表页】的规则（业界叫「统计计时法」）
+   *
+   *   刚刚（<1分钟） · X分钟前（<1小时） · X小时前（<24小时） · 昨天 · N天前
+   *
+   * ⚠️ 三个必须守住的点（都是「一眼不像微信」的地方）：
+   *   1. 「昨天」就是两个字，**不带时分**。写成「昨天 16:20」是微信【详情页】的
+   *      写法（定时计时法），也不是微博的 —— 列表页里出现时分，一眼就假。
+   *   2. 「N天前」用阿拉伯数字：是「2天前」，不是「两天前」。
+   *   3. 超过 48 小时**不显示「M月D日」**，微信一直数到「N天前」。
+   *      我们的三条从 24~36 小时往回推，本来也就不该走到这个分支。
+   */
   function timeLabel(t, now) {
     var min = Math.floor((now - t) / 60000);
     if (min < 1) return '刚刚';
     if (min < 60) return min + '分钟前';
-    var hr = Math.floor(min / 60);
-    if (hr < 24 && dayDiff(t, now) === 0) return hr + '小时前';
+    if (min < 1440) return Math.floor(min / 60) + '小时前';
     var dd = dayDiff(t, now);
-    if (dd === 1) return '昨天 ' + hhmm(t);
-    if (dd === 2) return '两天前 ' + hhmm(t);
-    return (t.getMonth() + 1) + '月' + t.getDate() + '日 ' + hhmm(t);
+    if (dd <= 1) return '昨天';
+    return dd + '天前';
   }
 
   /* ---------- 选条 ---------- */
@@ -456,14 +466,15 @@ var WILL = {"_comment":"玉兔的意志日历 —— 不是排班表，是它自
     var rng = makeRng(hashStr(dateKey(now) + '-' + now.getHours()));
     var will = WILL.days[dateKey(now)] || WILL._fallback;
 
-    // 时间点：从现在往回推，三条落在 0~38 小时内
-    var times = [];
-    var t = now.getTime() - rng() * 150 * 60000;
-    times.push(new Date(Math.round(t)));
-    t -= (6 + rng() * 4) * 3600000;
-    times.push(new Date(Math.round(t)));
-    t -= (10 + rng() * 6) * 3600000;
-    times.push(new Date(Math.round(t)));
+    // 时间点：从现在往回推 —— 今天 / 昨天 / 前天 各一条，「三天可见」才名副其实。
+    // ⚠️ 别把三条都挤在同一天：那样永远只显示「X小时前」，看不出这是个三天可见的本子。
+    //    按 docs 的设计：第 1 条 ≈ 现在（几十分钟前），第 2 条 8~14 小时前，第 3 条 24~36 小时前。
+    var nowMs = now.getTime();
+    var times = [
+      new Date(Math.round(nowMs - rng() * 50 * 60000)),
+      new Date(Math.round(nowMs - (8 + rng() * 6) * 3600000)),
+      new Date(Math.round(nowMs - (24 + rng() * 12) * 3600000))
+    ];
 
     // 它今天不想写，就真的没有 —— 不解释、不留空位
     if (will.mode === 'silent') return [];
